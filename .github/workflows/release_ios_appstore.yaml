@@ -1,14 +1,19 @@
-name: iOS — TestFlight (beta)
+name: iOS — App Store release
 
 on:
   repository_dispatch:
-    types: [beta]
+    types: [release]
   workflow_dispatch:
     inputs:
       ref:
-        description: "App repo ref to build (branch, tag, or sha)"
+        description: "App repo tag to build (e.g. v1.0.0)"
+        required: true
+      submit_for_review:
+        description: "Auto-submit to App Review"
         required: false
-        default: "main"
+        default: "false"
+        type: choice
+        options: ["true", "false"]
 
 permissions:
   contents: read
@@ -19,18 +24,24 @@ env:
   XCODE_VERSION: "16.4"
 
 jobs:
-  build:
+  release:
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
-      - name: Resolve checkout ref
+      - name: Resolve ref + version
         id: ref
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "ref=${{ github.event.client_payload.sha }}" >> "$GITHUB_OUTPUT"
+            REF="${{ github.event.client_payload.ref_name }}"
+            SHA="${{ github.event.client_payload.sha }}"
           else
-            echo "ref=${{ inputs.ref }}" >> "$GITHUB_OUTPUT"
+            REF="${{ inputs.ref }}"
+            SHA="$REF"
           fi
+          VERSION="${REF#v}"
+          echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$REF" >> "$GITHUB_OUTPUT"
 
       - name: Checkout app repo
         uses: actions/checkout@v4
@@ -86,15 +97,15 @@ jobs:
             --private-key "$KEY_PATH"
           asc auth status --validate
 
-      - name: Archive + export + publish TestFlight
+      - name: Archive + export + publish App Store
         working-directory: ${{ env.APP_DIR }}/iosApp
         env:
           ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          TESTFLIGHT_GROUP: ${{ vars.TESTFLIGHT_GROUP || 'Beta' }}
           BUILD_NUMBER: ${{ github.run_number }}
-          VERSION_NAME: 0.1.0-rc.${{ github.run_number }}
+          VERSION_NAME: ${{ steps.ref.outputs.version }}
+          SUBMIT_FOR_REVIEW: ${{ inputs.submit_for_review || 'false' }}
         run: |
           set -euo pipefail
           ARCHIVE="build/Submindo-${VERSION_NAME}-${BUILD_NUMBER}.xcarchive"
@@ -121,15 +132,20 @@ jobs:
             --xcodebuild-flag=-authenticationKeyID --xcodebuild-flag="$ASC_KEY_ID" \
             --xcodebuild-flag=-authenticationKeyIssuerID --xcodebuild-flag="$ASC_ISSUER_ID"
 
-          asc publish testflight \
+          SUBMIT_FLAGS=""
+          if [ "$SUBMIT_FOR_REVIEW" = "true" ]; then
+            SUBMIT_FLAGS="--submit --confirm"
+          fi
+
+          asc publish appstore \
             --app "$ASC_APP_ID" --ipa "$IPA" \
-            --group "$TESTFLIGHT_GROUP" \
-            --wait --poll-interval 15s
+            --version "$VERSION_NAME" \
+            $SUBMIT_FLAGS
 
       - name: Upload IPA artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-beta-ipa
+          name: ios-release-ipa-${{ steps.ref.outputs.tag }}
           path: ${{ env.APP_DIR }}/iosApp/build/*.ipa
           if-no-files-found: ignore

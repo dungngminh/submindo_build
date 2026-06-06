@@ -1,35 +1,46 @@
-name: Android — Firebase App Distribution (beta)
+name: Android — Play Store release
 
 on:
   repository_dispatch:
-    types: [beta]
+    types: [release]
   workflow_dispatch:
     inputs:
       ref:
-        description: "App repo ref to build (branch, tag, or sha)"
-        required: false
-        default: "main"
+        description: "App repo tag to build (e.g. v1.0.0)"
+        required: true
+      track:
+        description: "Play track"
+        required: true
+        default: "internal"
+        type: choice
+        options: [internal, alpha, beta, production]
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   APP_REPO: dungngminh/submindo
   APP_DIR: app
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Resolve checkout ref
+      - name: Resolve ref + version
         id: ref
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "ref=${{ github.event.client_payload.sha }}" >> "$GITHUB_OUTPUT"
+            REF="${{ github.event.client_payload.ref_name }}"
+            SHA="${{ github.event.client_payload.sha }}"
           else
-            echo "ref=${{ inputs.ref }}" >> "$GITHUB_OUTPUT"
+            REF="${{ inputs.ref }}"
+            SHA="$REF"
           fi
+          VERSION="${REF#v}"
+          echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$REF" >> "$GITHUB_OUTPUT"
 
       - name: Checkout app repo
         uses: actions/checkout@v4
@@ -52,13 +63,11 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
-          test -s keystore.jks
 
-      - name: Decode Firebase service account
+      - name: Decode Play service account
         working-directory: ${{ env.APP_DIR }}
         run: |
-          echo "${{ secrets.FIREBASE_SA_JSON_BASE64 }}" | base64 -d > firebase-sa.json
-          test -s firebase-sa.json
+          echo "${{ secrets.PLAY_SERVICE_ACCOUNT_JSON_BASE64 }}" | base64 -d > play-sa.json
 
       - name: Write local.properties
         working-directory: ${{ env.APP_DIR }}
@@ -70,37 +79,33 @@ jobs:
           REVENUECAT_IOS_API_KEY=${{ secrets.REVENUECAT_IOS_API_KEY }}
           PROPS
 
-      - name: Write release notes
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          {
-            echo "Build ${{ github.run_number }}"
-            echo "Source: ${{ steps.ref.outputs.ref }}"
-            echo
-            echo "Triggered: ${{ github.event_name }}"
-          } > release-notes.txt
-
-      - name: Build + upload to Firebase App Distribution
+      - name: Build AAB + publish to Play
         working-directory: ${{ env.APP_DIR }}
         env:
           VERSION_CODE: ${{ github.run_number }}
-          VERSION_NAME: 0.1.0-rc.${{ github.run_number }}
+          VERSION_NAME: ${{ steps.ref.outputs.version }}
           KEYSTORE_PATH: ${{ github.workspace }}/${{ env.APP_DIR }}/keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
-          FIREBASE_SA_JSON_PATH: ${{ github.workspace }}/${{ env.APP_DIR }}/firebase-sa.json
-          FIREBASE_TESTER_GROUPS: ${{ vars.FIREBASE_TESTER_GROUPS || 'testers' }}
-          FIREBASE_RELEASE_NOTES_FILE: ${{ github.workspace }}/${{ env.APP_DIR }}/release-notes.txt
+          PLAY_SERVICE_ACCOUNT_JSON_PATH: ${{ github.workspace }}/${{ env.APP_DIR }}/play-sa.json
+          PLAY_TRACK: ${{ inputs.track || 'internal' }}
         run: |
-          ./gradlew :composeApp:assembleRelease \
-                    :composeApp:appDistributionUploadRelease \
+          ./gradlew :composeApp:bundleRelease \
+                    :composeApp:publishReleaseBundle \
                     --no-daemon --stacktrace
 
-      - name: Upload APK artifact
+      - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: ${{ env.APP_DIR }}/composeApp/build/outputs/apk/release/*.apk
+          name: app-release-aab-${{ steps.ref.outputs.tag }}
+          path: ${{ env.APP_DIR }}/composeApp/build/outputs/bundle/release/*.aab
           if-no-files-found: error
+
+      - name: Attach AAB to GitHub release
+        if: github.event_name == 'repository_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ref.outputs.tag }}
+          files: ${{ env.APP_DIR }}/composeApp/build/outputs/bundle/release/*.aab
+          fail_on_unmatched_files: false
