@@ -1,0 +1,77 @@
+name: Setup iOS build env
+description: Xcode + JDK + Gradle + asc CLI + ASC API key auth.
+
+inputs:
+  xcode-version:
+    description: 'Xcode version to select (e.g. 16.4)'
+    required: false
+    default: '16.4'
+  java-version:
+    description: 'Temurin JDK major version for KMP linker'
+    required: false
+    default: '17'
+  install-asc:
+    description: 'Install the asc CLI'
+    required: false
+    default: 'true'
+  install-xcode:
+    description: 'Run xcode-select for the requested Xcode'
+    required: false
+    default: 'true'
+  asc-key-id:
+    description: 'App Store Connect API Key ID'
+    required: true
+  asc-issuer-id:
+    description: 'App Store Connect Issuer ID'
+    required: true
+  asc-key-p8-base64:
+    description: 'base64-encoded AuthKey_*.p8'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode ${{ inputs.xcode-version }}
+      if: ${{ inputs.install-xcode == 'true' }}
+      shell: bash
+      run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode-version }}.app
+
+    - name: Setup JDK ${{ inputs.java-version }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Install asc CLI
+      if: ${{ inputs.install-asc == 'true' }}
+      uses: rudrankriyam/setup-asc@v1
+      with:
+        version: latest
+
+    - name: Write + auth ASC API key
+      shell: bash
+      env:
+        ASC_KEY_ID: ${{ inputs.asc-key-id }}
+        ASC_ISSUER_ID: ${{ inputs.asc-issuer-id }}
+        ASC_KEY_P8_BASE64: ${{ inputs.asc-key-p8-base64 }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.private_keys"
+        chmod 700 "$HOME/.private_keys"
+        KEY_PATH="$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8"
+        ( umask 077 && echo "$ASC_KEY_P8_BASE64" | base64 -d > "$KEY_PATH" )
+        chmod 600 "$KEY_PATH"
+        test -s "$KEY_PATH"
+        {
+          echo "ASC_KEY_PATH=$KEY_PATH"
+          echo "ASC_KEY_ID=$ASC_KEY_ID"
+          echo "ASC_ISSUER_ID=$ASC_ISSUER_ID"
+        } >> "$GITHUB_ENV"
+        asc auth login --bypass-keychain --name ci \
+          --key-id "$ASC_KEY_ID" \
+          --issuer-id "$ASC_ISSUER_ID" \
+          --private-key "$KEY_PATH"
+        asc auth status --validate

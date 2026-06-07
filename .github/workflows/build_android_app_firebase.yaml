@@ -13,94 +13,119 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.client_payload.ref || inputs.ref || github.ref }}
+  cancel-in-progress: true
+
 env:
   APP_REPO: dungngminh/submindo
   APP_DIR: app
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+      version_code: ${{ steps.resolve.outputs.version_code }}
+      version_name: ${{ steps.resolve.outputs.version_name }}
     steps:
-      - name: Resolve checkout ref
-        id: ref
+      - name: Resolve ref + version
+        id: resolve
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "ref=${{ github.event.client_payload.sha }}" >> "$GITHUB_OUTPUT"
+            REF="${{ github.event.client_payload.sha }}"
           else
-            echo "ref=${{ inputs.ref }}" >> "$GITHUB_OUTPUT"
+            REF="${{ inputs.ref }}"
           fi
+          VERSION_CODE="${{ github.run_number }}"
+          VERSION_NAME="0.1.0-rc.${{ github.run_number }}"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved: ref=$REF code=$VERSION_CODE name=$VERSION_NAME"
 
-      - name: Checkout app repo
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout build repo (for composite actions)
         uses: actions/checkout@v4
+
+      - name: Checkout app + write local.properties
+        uses: ./.github/actions/checkout-app
         with:
-          repository: ${{ env.APP_REPO }}
-          token: ${{ secrets.APP_REPO_PAT }}
-          ref: ${{ steps.ref.outputs.ref }}
-          path: ${{ env.APP_DIR }}
+          app-repo: ${{ env.APP_REPO }}
+          pat: ${{ secrets.APP_REPO_PAT }}
+          ref: ${{ needs.prepare.outputs.ref }}
+          app-dir: ${{ env.APP_DIR }}
+          gemini-key: ${{ secrets.GEMINI_API_KEY }}
+          revenuecat-android-key: ${{ secrets.REVENUECAT_ANDROID_API_KEY }}
+          revenuecat-ios-key: ${{ secrets.REVENUECAT_IOS_API_KEY }}
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: Setup Android build env
+        uses: ./.github/actions/setup-android-build
         with:
-          distribution: temurin
-          java-version: "17"
+          app-dir: ${{ env.APP_DIR }}
+          keystore-base64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          keystore-password: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          key-alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          key-password: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      - name: Cache Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Decode keystore
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
-          test -s keystore.jks
-
-      - name: Decode Firebase service account
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          echo "${{ secrets.FIREBASE_SA_JSON_BASE64 }}" | base64 -d > firebase-sa.json
-          test -s firebase-sa.json
-
-      - name: Write local.properties
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          cat > local.properties <<'PROPS'
-          sdk.dir=${ANDROID_HOME}
-          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-          REVENUECAT_ANDROID_API_KEY=${{ secrets.REVENUECAT_ANDROID_API_KEY }}
-          REVENUECAT_IOS_API_KEY=${{ secrets.REVENUECAT_IOS_API_KEY }}
-          PROPS
-
-      - name: Write release notes
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          {
-            echo "Build ${{ github.run_number }}"
-            echo "Source: ${{ steps.ref.outputs.ref }}"
-            echo
-            echo "Triggered: ${{ github.event_name }}"
-          } > release-notes.txt
-
-      - name: Build + upload to Firebase App Distribution
+      - name: Build release APK
         working-directory: ${{ env.APP_DIR }}
         env:
-          VERSION_CODE: ${{ github.run_number }}
-          VERSION_NAME: 0.1.0-rc.${{ github.run_number }}
-          KEYSTORE_PATH: ${{ github.workspace }}/${{ env.APP_DIR }}/keystore.jks
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
-          FIREBASE_SA_JSON_PATH: ${{ github.workspace }}/${{ env.APP_DIR }}/firebase-sa.json
-          FIREBASE_TESTER_GROUPS: ${{ vars.FIREBASE_TESTER_GROUPS || 'testers' }}
-          FIREBASE_RELEASE_NOTES_FILE: ${{ github.workspace }}/${{ env.APP_DIR }}/release-notes.txt
-        run: |
-          ./gradlew :composeApp:assembleRelease \
-                    :composeApp:appDistributionUploadRelease \
-                    --no-daemon --stacktrace
+          VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+          VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+        run: ./gradlew :composeApp:assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
+          name: android-beta-apk
           path: ${{ env.APP_DIR }}/composeApp/build/outputs/apk/release/*.apk
           if-no-files-found: error
+          retention-days: 7
+
+  distribute:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-beta-apk
+          path: artifact
+
+      - name: Locate APK
+        id: apk
+        run: |
+          APK=$(ls artifact/*.apk | head -n1)
+          test -s "$APK"
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Decode Firebase service account
+        env:
+          FIREBASE_SA_JSON_BASE64: ${{ secrets.FIREBASE_SA_JSON_BASE64 }}
+        run: |
+          echo "$FIREBASE_SA_JSON_BASE64" | base64 -d > firebase-sa.json
+          test -s firebase-sa.json
+
+      - name: Write release notes
+        run: |
+          {
+            echo "Submindo beta ${{ needs.prepare.outputs.version_name }}"
+            echo "Build #${{ needs.prepare.outputs.version_code }}"
+            echo "Source: ${{ needs.prepare.outputs.ref }}"
+          } > release-notes.txt
+
+      - name: Upload to Firebase App Distribution
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          serviceCredentialsFile: firebase-sa.json
+          groups: ${{ vars.FIREBASE_TESTER_GROUPS || 'testers' }}
+          file: ${{ steps.apk.outputs.path }}
+          releaseNotesFile: release-notes.txt

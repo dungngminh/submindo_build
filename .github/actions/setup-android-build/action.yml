@@ -1,0 +1,60 @@
+name: Setup Android build env
+description: JDK 17 + Gradle cache + decode keystore + export signing env vars.
+
+inputs:
+  app-dir:
+    description: 'Path of the checked-out app repo'
+    required: false
+    default: 'app'
+  java-version:
+    description: 'Temurin JDK major version'
+    required: false
+    default: '17'
+  keystore-base64:
+    description: 'base64-encoded keystore.jks'
+    required: true
+  keystore-password:
+    description: 'Keystore store password'
+    required: true
+  key-alias:
+    description: 'Key alias inside the keystore'
+    required: true
+  key-password:
+    description: 'Key password'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup JDK ${{ inputs.java-version }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Decode keystore
+      shell: bash
+      working-directory: ${{ inputs.app-dir }}
+      env:
+        KEYSTORE_B64: ${{ inputs.keystore-base64 }}
+      run: |
+        echo "$KEYSTORE_B64" | base64 -d > keystore.jks
+        test -s keystore.jks
+
+    - name: Export signing env
+      shell: bash
+      env:
+        KEYSTORE_PASSWORD_INPUT: ${{ inputs.keystore-password }}
+        KEY_ALIAS_INPUT: ${{ inputs.key-alias }}
+        KEY_PASSWORD_INPUT: ${{ inputs.key-password }}
+        APP_DIR: ${{ inputs.app-dir }}
+      run: |
+        {
+          echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/${APP_DIR}/keystore.jks"
+          echo "KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD_INPUT}"
+          echo "KEY_ALIAS=${KEY_ALIAS_INPUT}"
+          echo "KEY_PASSWORD=${KEY_PASSWORD_INPUT}"
+        } >> "$GITHUB_ENV"

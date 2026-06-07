@@ -1,0 +1,54 @@
+name: Checkout Submindo app repo
+description: Resolve ref + checkout app repo via PAT + write local.properties from secrets.
+
+inputs:
+  app-repo:
+    description: 'GitHub repo (owner/name) of the app source'
+    required: true
+  pat:
+    description: 'Fine-grained PAT with Contents:read on the app repo'
+    required: true
+  ref:
+    description: 'Git ref to checkout (branch, tag, or SHA)'
+    required: true
+  app-dir:
+    description: 'Path under workspace to checkout into'
+    required: false
+    default: 'app'
+  gemini-key:
+    description: 'GEMINI_API_KEY value'
+    required: true
+  revenuecat-android-key:
+    description: 'RevenueCat Android API key'
+    required: true
+  revenuecat-ios-key:
+    description: 'RevenueCat iOS API key'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout app repo (${{ inputs.app-repo }}@${{ inputs.ref }})
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.app-repo }}
+        token: ${{ inputs.pat }}
+        ref: ${{ inputs.ref }}
+        path: ${{ inputs.app-dir }}
+
+    - name: Write local.properties
+      shell: bash
+      working-directory: ${{ inputs.app-dir }}
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-key }}
+        RC_ANDROID: ${{ inputs.revenuecat-android-key }}
+        RC_IOS: ${{ inputs.revenuecat-ios-key }}
+      run: |
+        {
+          if [ -n "${ANDROID_HOME:-}" ]; then
+            echo "sdk.dir=${ANDROID_HOME}"
+          fi
+          echo "GEMINI_API_KEY=${GEMINI_API_KEY}"
+          echo "REVENUECAT_ANDROID_API_KEY=${RC_ANDROID}"
+          echo "REVENUECAT_IOS_API_KEY=${RC_IOS}"
+        } > local.properties
