@@ -72,10 +72,6 @@ jobs:
           asc-issuer-id: ${{ secrets.ASC_ISSUER_ID }}
           asc-key-p8-base64: ${{ secrets.ASC_KEY_P8_BASE64 }}
 
-      - name: Build KMP framework
-        working-directory: ${{ env.APP_DIR }}
-        run: ./gradlew :composeApp:linkReleaseFrameworkIosArm64 --no-daemon --stacktrace
-
       - name: Archive + export IPA
         working-directory: ${{ env.APP_DIR }}/iosApp
         env:
