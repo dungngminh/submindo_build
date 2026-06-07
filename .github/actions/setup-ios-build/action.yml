@@ -1,5 +1,5 @@
 name: Setup iOS build env
-description: Xcode + JDK + Gradle + asc CLI + ASC API key auth.
+description: Xcode + JDK + Gradle + asc CLI + ASC API key auth + import signing cert.
 
 inputs:
   xcode-version:
@@ -27,6 +27,14 @@ inputs:
   asc-key-p8-base64:
     description: 'base64-encoded AuthKey_*.p8'
     required: true
+  distribution-p12-base64:
+    description: 'base64-encoded Apple Distribution .p12 (cert + private key)'
+    required: false
+    default: ''
+  distribution-p12-password:
+    description: 'Password for the .p12 file'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -75,3 +83,59 @@ runs:
           --issuer-id "$ASC_ISSUER_ID" \
           --private-key "$KEY_PATH"
         asc auth status --validate
+
+    - name: Import Distribution cert into temp keychain
+      if: ${{ inputs.distribution-p12-base64 != '' }}
+      shell: bash
+      env:
+        P12_BASE64: ${{ inputs.distribution-p12-base64 }}
+        P12_PASSWORD: ${{ inputs.distribution-p12-password }}
+        KEYCHAIN_PASSWORD: ci_keychain_temp_${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        P12_PATH="$RUNNER_TEMP/distribution.p12"
+        KEYCHAIN_PATH="$RUNNER_TEMP/ci.keychain-db"
+
+        # Decode .p12
+        ( umask 077 && echo "$P12_BASE64" | base64 -d > "$P12_PATH" )
+        test -s "$P12_PATH"
+
+        # Create temp keychain
+        security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        security set-keychain-settings -lut 3600 "$KEYCHAIN_PATH"
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+        # Import cert
+        security import "$P12_PATH" \
+          -k "$KEYCHAIN_PATH" \
+          -P "$P12_PASSWORD" \
+          -A \
+          -t cert -f pkcs12
+
+        # Add to search list so xcodebuild finds it
+        security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+        # Allow xcodebuild to access key without prompt
+        security set-key-partition-list \
+          -S apple-tool:,apple:,codesign: \
+          -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+        echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+        echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+        # Verify cert imported
+        security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+    - name: Download provisioning profile via asc
+      if: ${{ inputs.distribution-p12-base64 != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+        mkdir -p "$PROFILES_DIR"
+        # Download all app-store profiles for the app — asc writes .mobileprovision files
+        asc profiles download \
+          --type app-store \
+          --output-dir "$PROFILES_DIR"
+        echo "Profiles installed:"
+        ls "$PROFILES_DIR"/*.mobileprovision 2>/dev/null || echo "none found"

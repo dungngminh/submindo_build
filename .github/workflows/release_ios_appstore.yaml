@@ -1,4 +1,6 @@
-name: iOS — App Store release
+name: Release iOS → App Store
+
+run-name: "iOS Release — ${{ github.event.client_payload.ref_name || inputs.ref }}"
 
 on:
   repository_dispatch:
@@ -80,6 +82,8 @@ jobs:
           asc-key-id: ${{ secrets.ASC_KEY_ID }}
           asc-issuer-id: ${{ secrets.ASC_ISSUER_ID }}
           asc-key-p8-base64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          distribution-p12-base64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+          distribution-p12-password: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
 
       - name: Archive + export IPA
         working-directory: ${{ env.APP_DIR }}/iosApp
@@ -96,21 +100,13 @@ jobs:
             --project iosApp.xcodeproj --scheme iosApp --configuration Release \
             --archive-path "$ARCHIVE" --clean --overwrite \
             --xcodebuild-flag=-destination --xcodebuild-flag=generic/platform=iOS \
-            --xcodebuild-flag=-allowProvisioningUpdates \
-            --xcodebuild-flag=-authenticationKeyPath --xcodebuild-flag="$ASC_KEY_PATH" \
-            --xcodebuild-flag=-authenticationKeyID --xcodebuild-flag="$ASC_KEY_ID" \
-            --xcodebuild-flag=-authenticationKeyIssuerID --xcodebuild-flag="$ASC_ISSUER_ID" \
             --xcodebuild-flag="MARKETING_VERSION=$VERSION_NAME" \
             --xcodebuild-flag="CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
 
           asc xcode export \
             --archive-path "$ARCHIVE" \
             --export-options .asc/export-options-appstore.plist \
-            --ipa-path "$IPA" --overwrite --timeout 10m \
-            --xcodebuild-flag=-allowProvisioningUpdates \
-            --xcodebuild-flag=-authenticationKeyPath --xcodebuild-flag="$ASC_KEY_PATH" \
-            --xcodebuild-flag=-authenticationKeyID --xcodebuild-flag="$ASC_KEY_ID" \
-            --xcodebuild-flag=-authenticationKeyIssuerID --xcodebuild-flag="$ASC_ISSUER_ID"
+            --ipa-path "$IPA" --overwrite --timeout 10m
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4

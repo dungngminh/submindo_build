@@ -1,4 +1,6 @@
-name: Android — Firebase App Distribution (beta)
+name: Build Android Beta → Firebase App Distribution
+
+run-name: "Android Beta — ${{ github.event.client_payload.ref_name || inputs.ref || 'main' }}"
 
 on:
   repository_dispatch:

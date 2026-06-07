@@ -1,4 +1,6 @@
-name: Android — Play Store release
+name: Release Android → Play Store
+
+run-name: "Android Release — ${{ github.event.client_payload.ref_name || inputs.ref }}"
 
 on:
   repository_dispatch:
