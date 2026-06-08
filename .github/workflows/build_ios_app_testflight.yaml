@@ -75,6 +75,7 @@ jobs:
           asc-key-p8-base64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           distribution-p12-base64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
           distribution-p12-password: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
+          bundle-id: me.komkatstudio.submindo
 
       - name: Archive + export IPA
         working-directory: ${{ env.APP_DIR }}/iosApp
@@ -92,7 +93,10 @@ jobs:
             --archive-path "$ARCHIVE" --clean --overwrite \
             --xcodebuild-flag=-destination --xcodebuild-flag=generic/platform=iOS \
             --xcodebuild-flag="MARKETING_VERSION=$VERSION_NAME" \
-            --xcodebuild-flag="CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+            --xcodebuild-flag="CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
+            --xcodebuild-flag="CODE_SIGN_STYLE=Manual" \
+            --xcodebuild-flag="CODE_SIGN_IDENTITY=Apple Distribution" \
+            --xcodebuild-flag="PROVISIONING_PROFILE=$PROVISIONING_PROFILE_UUID"
 
           asc xcode export \
             --archive-path "$ARCHIVE" \

@@ -1,7 +1,16 @@
 name: Setup iOS build env
 description: Xcode + JDK + Gradle + asc CLI + ASC API key auth + import signing cert.
 
+outputs:
+  provisioning-profile-uuid:
+    description: 'UUID of the downloaded IOS_APP_STORE profile matching bundle-id'
+    value: ${{ steps.resolve-profile.outputs.uuid }}
+
 inputs:
+  bundle-id:
+    description: 'App bundle identifier to match provisioning profile'
+    required: false
+    default: ''
   xcode-version:
     description: 'Xcode version to select (e.g. 16.4)'
     required: false
@@ -126,32 +135,57 @@ runs:
         # Verify cert imported
         security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-    - name: Download provisioning profiles via asc
+    - name: Download + resolve provisioning profile
+      id: resolve-profile
       if: ${{ inputs.distribution-p12-base64 != '' }}
       shell: bash
+      env:
+        BUNDLE_ID: ${{ inputs.bundle-id }}
       run: |
         set -euo pipefail
         PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
         mkdir -p "$PROFILES_DIR"
 
-        # Use --profile-type flag to filter; extract id from JSON
-        # asc may return flat array [{id, name, profileType, ...}]
-        # or ASC-style [{id, attributes: {profileType, ...}}]
         RAW=$(asc profiles list --profile-type IOS_APP_STORE --output json)
-        echo "Raw profiles JSON (first 500 chars): ${RAW:0:500}"
 
+        # Extract all profile IDs
         PROFILE_IDS=$(echo "$RAW" | jq -r '.data[].id')
-
         if [ -z "$PROFILE_IDS" ]; then
           echo "ERROR: No IOS_APP_STORE profiles found on ASC" >&2
           exit 1
         fi
 
+        MATCHED_UUID=""
         while IFS= read -r PROFILE_ID; do
           OUTPUT="$PROFILES_DIR/${PROFILE_ID}.mobileprovision"
           echo "Downloading profile $PROFILE_ID"
           asc profiles download --id "$PROFILE_ID" --output "$OUTPUT"
+
+          # Extract UUID + bundle ID from plist inside .mobileprovision
+          # .mobileprovision = PKCS7 → strip header/footer, parse embedded plist
+          PLIST=$(security cms -D -i "$OUTPUT" 2>/dev/null)
+          PROFILE_UUID=$(echo "$PLIST" | plutil -extract UUID raw - 2>/dev/null || true)
+          PROFILE_BUNDLE=$(echo "$PLIST" | plutil -extract Entitlements.application-identifier raw - 2>/dev/null \
+            | sed 's/^[A-Z0-9]*\.//' || true)
+
+          echo "  UUID=$PROFILE_UUID  BundleID=$PROFILE_BUNDLE"
+
+          # Match by bundle ID if provided, else use first profile
+          if [ -z "$BUNDLE_ID" ] && [ -z "$MATCHED_UUID" ]; then
+            MATCHED_UUID="$PROFILE_UUID"
+          elif [ "$PROFILE_BUNDLE" = "$BUNDLE_ID" ] || [ "$PROFILE_BUNDLE" = "*" ]; then
+            MATCHED_UUID="$PROFILE_UUID"
+          fi
         done <<< "$PROFILE_IDS"
+
+        if [ -z "$MATCHED_UUID" ]; then
+          echo "ERROR: No profile matched bundle ID '$BUNDLE_ID'" >&2
+          exit 1
+        fi
+
+        echo "uuid=$MATCHED_UUID" >> "$GITHUB_OUTPUT"
+        echo "PROVISIONING_PROFILE_UUID=$MATCHED_UUID" >> "$GITHUB_ENV"
+        echo "Resolved profile UUID: $MATCHED_UUID"
 
         echo "Installed profiles:"
         ls "$PROFILES_DIR"/*.mobileprovision
