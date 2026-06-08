@@ -126,16 +126,28 @@ runs:
         # Verify cert imported
         security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-    - name: Download provisioning profile via asc
+    - name: Download provisioning profiles via asc
       if: ${{ inputs.distribution-p12-base64 != '' }}
       shell: bash
       run: |
         set -euo pipefail
         PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
         mkdir -p "$PROFILES_DIR"
-        # Download all app-store profiles for the app — asc writes .mobileprovision files
-        asc profiles download \
-          --type app-store \
-          --output-dir "$PROFILES_DIR"
-        echo "Profiles installed:"
-        ls "$PROFILES_DIR"/*.mobileprovision 2>/dev/null || echo "none found"
+
+        # List all app-store profiles, extract IDs
+        PROFILE_IDS=$(asc profiles list --output json \
+          | jq -r '.[] | select(.profileType == "IOS_APP_STORE") | .id')
+
+        if [ -z "$PROFILE_IDS" ]; then
+          echo "ERROR: No IOS_APP_STORE profiles found on ASC" >&2
+          exit 1
+        fi
+
+        while IFS= read -r PROFILE_ID; do
+          OUTPUT="$PROFILES_DIR/${PROFILE_ID}.mobileprovision"
+          echo "Downloading profile $PROFILE_ID"
+          asc profiles download --id "$PROFILE_ID" --output "$OUTPUT"
+        done <<< "$PROFILE_IDS"
+
+        echo "Installed profiles:"
+        ls "$PROFILES_DIR"/*.mobileprovision
