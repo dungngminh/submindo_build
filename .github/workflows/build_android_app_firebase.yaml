@@ -41,7 +41,7 @@ jobs:
             REF="${{ inputs.ref }}"
           fi
           VERSION_CODE="${{ github.run_number }}"
-          VERSION_NAME="0.1.0-rc.${{ github.run_number }}"
+          VERSION_NAME="0.1.0"
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
