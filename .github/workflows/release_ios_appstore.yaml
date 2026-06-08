@@ -98,23 +98,8 @@ jobs:
           EXPORT_OPTIONS="$RUNNER_TEMP/ExportOptions.plist"
           mkdir -p build
 
-          # Write ExportOptions.plist dynamically — python3 avoids heredoc indent issues
-          python3 - "$EXPORT_OPTIONS" "$PROVISIONING_PROFILE_UUID" << 'PYEOF'
-import sys, plistlib
-output_path, profile_uuid = sys.argv[1], sys.argv[2]
-data = {
-    "method": "app-store-connect",
-    "signingStyle": "manual",
-    "teamID": "TSR43Q9T7B",
-    "signingCertificate": "Apple Distribution",
-    "provisioningProfiles": {"me.komkatstudio.submindo": profile_uuid},
-    "uploadSymbols": True,
-    "stripSwiftSymbols": True,
-}
-with open(output_path, "wb") as f:
-    plistlib.dump(data, f, fmt=plistlib.FMT_XML)
-print(f"ExportOptions.plist written to {output_path} (profile={profile_uuid})")
-PYEOF
+          sed "s/__PROFILE_UUID__/${PROVISIONING_PROFILE_UUID}/g" ".asc/export-options-template.plist" > "$EXPORT_OPTIONS"
+          echo "ExportOptions.plist written (profile=${PROVISIONING_PROFILE_UUID})"
 
           asc xcode archive \
             --project iosApp.xcodeproj --scheme iosApp --configuration Release \
