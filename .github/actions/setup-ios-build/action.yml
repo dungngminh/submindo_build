@@ -134,9 +134,13 @@ runs:
         PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
         mkdir -p "$PROFILES_DIR"
 
-        # List all app-store profiles, extract IDs
-        PROFILE_IDS=$(asc profiles list --output json \
-          | jq -r '.[] | select(.profileType == "IOS_APP_STORE") | .id')
+        # Use --profile-type flag to filter; extract id from JSON
+        # asc may return flat array [{id, name, profileType, ...}]
+        # or ASC-style [{id, attributes: {profileType, ...}}]
+        RAW=$(asc profiles list --profile-type IOS_APP_STORE --output json)
+        echo "Raw profiles JSON (first 500 chars): ${RAW:0:500}"
+
+        PROFILE_IDS=$(echo "$RAW" | jq -r '.data[].id')
 
         if [ -z "$PROFILE_IDS" ]; then
           echo "ERROR: No IOS_APP_STORE profiles found on ASC" >&2
