@@ -1,30 +1,23 @@
 name: Setup iOS build env
-description: Xcode + JDK + Gradle + asc CLI + ASC API key auth + import signing cert.
-
-outputs:
-  provisioning-profile-uuid:
-    description: 'UUID of the downloaded IOS_APP_STORE profile matching bundle-id'
-    value: ${{ steps.resolve-profile.outputs.uuid }}
+description: >
+  Auth asc CLI, import Distribution cert into temp keychain,
+  download + install App Store provisioning profile, resolve profile UUID.
 
 inputs:
-  bundle-id:
-    description: 'App bundle identifier to match provisioning profile'
-    required: false
-    default: ''
   xcode-version:
-    description: 'Xcode version to select (e.g. 16.4)'
+    description: 'Xcode version to select'
     required: false
     default: '16.4'
   java-version:
-    description: 'Temurin JDK major version for KMP linker'
+    description: 'Temurin JDK version for KMP linker'
     required: false
     default: '17'
   install-asc:
-    description: 'Install the asc CLI'
+    description: 'Install asc CLI (set false if already installed)'
     required: false
     default: 'true'
   install-xcode:
-    description: 'Run xcode-select for the requested Xcode'
+    description: 'Run xcode-select (set false on ubuntu publish job)'
     required: false
     default: 'true'
   asc-key-id:
@@ -37,29 +30,41 @@ inputs:
     description: 'base64-encoded AuthKey_*.p8'
     required: true
   distribution-p12-base64:
-    description: 'base64-encoded Apple Distribution .p12 (cert + private key)'
+    description: 'base64-encoded Apple Distribution .p12. Leave empty to skip signing setup (publish-only jobs).'
     required: false
     default: ''
   distribution-p12-password:
-    description: 'Password for the .p12 file'
+    description: 'Password for the .p12'
     required: false
     default: ''
+  bundle-id:
+    description: 'Bundle ID to match when selecting provisioning profile'
+    required: false
+    default: ''
+
+outputs:
+  provisioning-profile-uuid:
+    description: 'UUID of the installed App Store provisioning profile'
+    value: ${{ steps.install-profile.outputs.uuid }}
 
 runs:
   using: composite
   steps:
+
     - name: Select Xcode ${{ inputs.xcode-version }}
       if: ${{ inputs.install-xcode == 'true' }}
       shell: bash
       run: sudo xcode-select -s /Applications/Xcode_${{ inputs.xcode-version }}.app
 
     - name: Setup JDK ${{ inputs.java-version }}
+      if: ${{ inputs.install-xcode == 'true' }}
       uses: actions/setup-java@v4
       with:
         distribution: temurin
         java-version: ${{ inputs.java-version }}
 
     - name: Setup Gradle
+      if: ${{ inputs.install-xcode == 'true' }}
       uses: gradle/actions/setup-gradle@v4
 
     - name: Install asc CLI
@@ -68,7 +73,7 @@ runs:
       with:
         version: latest
 
-    - name: Write + auth ASC API key
+    - name: Auth asc API key
       shell: bash
       env:
         ASC_KEY_ID: ${{ inputs.asc-key-id }}
@@ -81,17 +86,16 @@ runs:
         KEY_PATH="$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8"
         ( umask 077 && echo "$ASC_KEY_P8_BASE64" | base64 -d > "$KEY_PATH" )
         chmod 600 "$KEY_PATH"
-        test -s "$KEY_PATH"
-        {
-          echo "ASC_KEY_PATH=$KEY_PATH"
-          echo "ASC_KEY_ID=$ASC_KEY_ID"
-          echo "ASC_ISSUER_ID=$ASC_ISSUER_ID"
-        } >> "$GITHUB_ENV"
         asc auth login --bypass-keychain --name ci \
           --key-id "$ASC_KEY_ID" \
           --issuer-id "$ASC_ISSUER_ID" \
           --private-key "$KEY_PATH"
         asc auth status --validate
+        {
+          echo "ASC_KEY_PATH=$KEY_PATH"
+          echo "ASC_KEY_ID=$ASC_KEY_ID"
+          echo "ASC_ISSUER_ID=$ASC_ISSUER_ID"
+        } >> "$GITHUB_ENV"
 
     - name: Import Distribution cert into temp keychain
       if: ${{ inputs.distribution-p12-base64 != '' }}
@@ -99,93 +103,93 @@ runs:
       env:
         P12_BASE64: ${{ inputs.distribution-p12-base64 }}
         P12_PASSWORD: ${{ inputs.distribution-p12-password }}
-        KEYCHAIN_PASSWORD: ci_keychain_temp_${{ github.run_id }}
       run: |
         set -euo pipefail
-        P12_PATH="$RUNNER_TEMP/distribution.p12"
+        KEYCHAIN_PASSWORD="ci-$(openssl rand -hex 8)"
         KEYCHAIN_PATH="$RUNNER_TEMP/ci.keychain-db"
+        P12_PATH="$RUNNER_TEMP/distribution.p12"
 
-        # Decode .p12
         ( umask 077 && echo "$P12_BASE64" | base64 -d > "$P12_PATH" )
-        test -s "$P12_PATH"
+        chmod 600 "$P12_PATH"
 
-        # Create temp keychain
         security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
         security set-keychain-settings -lut 3600 "$KEYCHAIN_PATH"
         security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-        # Import cert
         security import "$P12_PATH" \
           -k "$KEYCHAIN_PATH" \
           -P "$P12_PASSWORD" \
-          -A \
-          -t cert -f pkcs12
+          -A -t cert -f pkcs12
 
-        # Add to search list so xcodebuild finds it
         security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
 
-        # Allow xcodebuild to access key without prompt
         security set-key-partition-list \
           -S apple-tool:,apple:,codesign: \
           -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-        echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-        echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
-
-        # Verify cert imported
+        echo "Installed signing identities:"
         security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-    - name: Download + resolve provisioning profile
-      id: resolve-profile
+        {
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD"
+        } >> "$GITHUB_ENV"
+
+    - name: Download + install provisioning profile
+      id: install-profile
       if: ${{ inputs.distribution-p12-base64 != '' }}
       shell: bash
       env:
         BUNDLE_ID: ${{ inputs.bundle-id }}
       run: |
         set -euo pipefail
-        PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-        mkdir -p "$PROFILES_DIR"
 
-        RAW=$(asc profiles list --profile-type IOS_APP_STORE --output json)
+        # List IOS_APP_STORE profiles via asc
+        PROFILE_IDS=$(asc profiles list \
+          --profile-type IOS_APP_STORE \
+          --output json \
+          | jq -r '.data[].id')
 
-        # Extract all profile IDs
-        PROFILE_IDS=$(echo "$RAW" | jq -r '.data[].id')
         if [ -z "$PROFILE_IDS" ]; then
-          echo "ERROR: No IOS_APP_STORE profiles found on ASC" >&2
+          echo "ERROR: No IOS_APP_STORE profiles found on App Store Connect" >&2
           exit 1
         fi
 
         MATCHED_UUID=""
         while IFS= read -r PROFILE_ID; do
-          OUTPUT="$PROFILES_DIR/${PROFILE_ID}.mobileprovision"
-          echo "Downloading profile $PROFILE_ID"
-          asc profiles download --id "$PROFILE_ID" --output "$OUTPUT"
+          PROFILE_PATH="$RUNNER_TEMP/${PROFILE_ID}.mobileprovision"
 
-          # Extract UUID + bundle ID from plist inside .mobileprovision
-          # .mobileprovision = PKCS7 → strip header/footer, parse embedded plist
-          PLIST=$(security cms -D -i "$OUTPUT" 2>/dev/null)
-          PROFILE_UUID=$(echo "$PLIST" | plutil -extract UUID raw - 2>/dev/null || true)
-          PROFILE_BUNDLE=$(echo "$PLIST" | plutil -extract Entitlements.application-identifier raw - 2>/dev/null \
-            | sed 's/^[A-Z0-9]*\.//' || true)
+          asc profiles download \
+            --id "$PROFILE_ID" \
+            --output "$PROFILE_PATH"
 
-          echo "  UUID=$PROFILE_UUID  BundleID=$PROFILE_BUNDLE"
+          # Inspect to get UUID + bundleId
+          INSPECT=$(asc profiles inspect \
+            --path "$PROFILE_PATH" \
+            --output json)
 
-          # Match by bundle ID if provided, else use first profile
+          PROFILE_UUID=$(echo "$INSPECT" | jq -r '.uuid // empty')
+          PROFILE_BUNDLE=$(echo "$INSPECT" | jq -r '.bundleId // empty')
+
+          echo "Profile $PROFILE_ID → uuid=$PROFILE_UUID bundleId=$PROFILE_BUNDLE"
+
+          # Match by bundleId if provided, else first profile wins
           if [ -z "$BUNDLE_ID" ] && [ -z "$MATCHED_UUID" ]; then
             MATCHED_UUID="$PROFILE_UUID"
-          elif [ "$PROFILE_BUNDLE" = "$BUNDLE_ID" ] || [ "$PROFILE_BUNDLE" = "*" ]; then
+          elif [ -n "$BUNDLE_ID" ] && [ "$PROFILE_BUNDLE" = "$BUNDLE_ID" ]; then
             MATCHED_UUID="$PROFILE_UUID"
           fi
+
+          # Install regardless — xcodebuild scans the directory
+          asc profiles local install --path "$PROFILE_PATH"
+          echo "Installed $PROFILE_ID"
         done <<< "$PROFILE_IDS"
 
         if [ -z "$MATCHED_UUID" ]; then
-          echo "ERROR: No profile matched bundle ID '$BUNDLE_ID'" >&2
+          echo "ERROR: No profile matched bundle ID '${BUNDLE_ID}'" >&2
           exit 1
         fi
 
+        echo "Resolved PROVISIONING_PROFILE_UUID=$MATCHED_UUID"
         echo "uuid=$MATCHED_UUID" >> "$GITHUB_OUTPUT"
         echo "PROVISIONING_PROFILE_UUID=$MATCHED_UUID" >> "$GITHUB_ENV"
-        echo "Resolved profile UUID: $MATCHED_UUID"
-
-        echo "Installed profiles:"
-        ls "$PROFILES_DIR"/*.mobileprovision
