@@ -27,7 +27,7 @@ concurrency:
 env:
   APP_REPO: dungngminh/submindo
   APP_DIR: app
-  XCODE_VERSION: "16.4"
+  XCODE_VERSION: "26.0.1"
 
 jobs:
   prepare:
