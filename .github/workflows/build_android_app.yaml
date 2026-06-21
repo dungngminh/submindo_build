@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
-      version_code: ${{ steps.app-info.outputs.version-code }}
+      version_code: ${{ steps.resolve.outputs.version_code }}
       version_name: ${{ steps.app-info.outputs.version-name }}
       commit_message: ${{ steps.app-info.outputs.commit-message }}
     steps:
@@ -44,10 +44,14 @@ jobs:
           else
             REF="${{ inputs.ref }}"
           fi
-          # versionCode is derived from the commit (see extract-app-info),
-          # not run_number, so it stays monotonic across counter resets.
+          # versionCode = build wall-clock epoch / 60. Always increases on every
+          # (re)build of the same commit, so re-dispatch/re-run never collides;
+          # not GitHub run_number, so it survives counter resets. ~29.6M now,
+          # fits int32 (max 2,100,000,000) for decades.
+          VERSION_CODE=$(( $(date +%s) / 60 ))
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "Resolved: ref=$REF"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "Resolved: ref=$REF version_code=$VERSION_CODE"
 
       - name: Extract app info
         id: app-info

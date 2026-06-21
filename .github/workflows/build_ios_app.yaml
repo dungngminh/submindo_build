@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
-      build_number: ${{ steps.app-info.outputs.version-code }}
+      build_number: ${{ steps.resolve.outputs.build_number }}
       version_name: ${{ steps.app-info.outputs.version-name }}
       commit_message: ${{ steps.app-info.outputs.commit-message }}
     steps:
@@ -45,10 +45,14 @@ jobs:
           else
             REF="${{ inputs.ref }}"
           fi
-          # build_number is derived from the commit (see extract-app-info),
-          # not run_number, so iOS + Android share it and it survives resets.
+          # build_number = build wall-clock epoch / 60. Always increases on every
+          # (re)build of the same commit, so re-dispatch/re-run never collides;
+          # not GitHub run_number, so it survives counter resets. ~29.6M now,
+          # fits int32 for decades.
+          BUILD_NUMBER=$(( $(date +%s) / 60 ))
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "Resolved: ref=$REF"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Resolved: ref=$REF build_number=$BUILD_NUMBER"
 
       - name: Extract app info
         id: app-info
