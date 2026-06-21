@@ -120,12 +120,14 @@ jobs:
 
       - name: Extract APK from AAB
         id: apk
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           wget -q https://github.com/google/bundletool/releases/download/1.15.6/bundletool-all-1.15.6.jar -O bundletool.jar
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > keystore.jks
           test -s keystore.jks
           java -jar bundletool.jar build-apks \
-            --bundle=${{ steps.aab.outputs.path }}
+            --bundle=${{ steps.aab.outputs.path }} \
             --output=android-apk-${{ needs.prepare.outputs.version_code }}.apks \
             --mode=universal \
             --ks=keystore.jks \
