@@ -31,17 +31,17 @@ runs:
         token: ${{ inputs.token }}
         path: app-src
 
-    - name: Extract version name from build.gradle.kts
+    - name: Extract version name from version.properties
       id: version-info
       shell: bash
       working-directory: app-src
       run: |
-        # Locate the gradle file that declares the version.
-        # `|| true` neutralises grep's exit 1 on no-match so pipefail/`set -e`
-        # don't abort the step before the fallback below can run.
-        for f in composeApp/build.gradle.kts app/build.gradle.kts build.gradle.kts; do
+        # Read VERSION_NAME from version.properties. `|| true` neutralises
+        # grep's exit 1 on no-match so pipefail/`set -e` don't abort the step
+        # before the fallback below can run.
+        for f in version.properties composeApp/version.properties; do
           if [ -f "$f" ]; then
-            VERSION_NAME=$(grep -E 'versionName\s*=\s*"[^"]*"' "$f" 2>/dev/null | sed -E 's/.*versionName\s*=\s*"([^"]*)".*/\1/' | head -1 || true)
+            VERSION_NAME=$(grep -E '^VERSION_NAME=' "$f" 2>/dev/null | head -1 | cut -d= -f2- | tr -d ' "'"'"'\r' || true)
             [ -n "$VERSION_NAME" ] && break
           fi
         done
@@ -49,7 +49,7 @@ runs:
         # Fallback to default if not found
         if [ -z "${VERSION_NAME:-}" ]; then
           VERSION_NAME="0.1.0"
-          echo "⚠️  Could not extract version name from build.gradle.kts, using fallback: $VERSION_NAME"
+          echo "⚠️  Could not read VERSION_NAME from version.properties, using fallback: $VERSION_NAME"
         else
           echo "✅ Extracted version name: $VERSION_NAME"
         fi
