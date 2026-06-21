@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
-      build_number: ${{ steps.resolve.outputs.build_number }}
+      build_number: ${{ steps.app-info.outputs.version-code }}
       version_name: ${{ steps.app-info.outputs.version-name }}
       commit_message: ${{ steps.app-info.outputs.commit-message }}
     steps:
@@ -45,10 +45,10 @@ jobs:
           else
             REF="${{ inputs.ref }}"
           fi
-          BUILD_NUMBER="${{ github.run_number }}"
+          # build_number is derived from the commit (see extract-app-info),
+          # not run_number, so iOS + Android share it and it survives resets.
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "Resolved: ref=$REF build_number=$BUILD_NUMBER"
+          echo "Resolved: ref=$REF"
 
       - name: Extract app info
         id: app-info

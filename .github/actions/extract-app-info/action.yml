@@ -16,6 +16,13 @@ outputs:
   version-name:
     description: Version name extracted from build.gradle.kts
     value: ${{ steps.version-info.outputs.version_name }}
+  version-code:
+    description: >-
+      Monotonic build number shared by Android + iOS. Derived from the
+      committer date of the built commit (epoch seconds / 60). Same commit ->
+      identical code on both platforms; later commits always produce a larger
+      code. Independent of GitHub run_number, so it survives counter resets.
+    value: ${{ steps.commit-info.outputs.version_code }}
   commit-message:
     description: Commit message from the specified ref
     value: ${{ steps.commit-info.outputs.message }}
@@ -56,7 +63,7 @@ runs:
 
         echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
 
-    - name: Get commit message
+    - name: Get commit message + version code
       id: commit-info
       shell: bash
       working-directory: app-src
@@ -64,3 +71,12 @@ runs:
         COMMIT_MSG=$(git log -1 --pretty=format:"%s")
         echo "message=$COMMIT_MSG" >> "$GITHUB_OUTPUT"
         echo "Commit message: $COMMIT_MSG"
+
+        # versionCode = committer date (epoch seconds) / 60.
+        # Monotonic on a forward-only history, identical across platforms for
+        # the same commit, and independent of GitHub's run_number (reset-proof).
+        # ~29.6M today, fits int32 (max 2,100,000,000) for decades.
+        COMMIT_EPOCH=$(git log -1 --format=%ct)
+        VERSION_CODE=$(( COMMIT_EPOCH / 60 ))
+        echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+        echo "Version code: $VERSION_CODE (commit epoch $COMMIT_EPOCH)"

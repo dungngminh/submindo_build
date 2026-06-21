@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
-      version_code: ${{ steps.resolve.outputs.version_code }}
+      version_code: ${{ steps.app-info.outputs.version-code }}
       version_name: ${{ steps.app-info.outputs.version-name }}
       commit_message: ${{ steps.app-info.outputs.commit-message }}
     steps:
@@ -44,10 +44,10 @@ jobs:
           else
             REF="${{ inputs.ref }}"
           fi
-          VERSION_CODE="${{ github.run_number }}"
+          # versionCode is derived from the commit (see extract-app-info),
+          # not run_number, so it stays monotonic across counter resets.
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "Resolved: ref=$REF code=$VERSION_CODE"
+          echo "Resolved: ref=$REF"
 
       - name: Extract app info
         id: app-info
