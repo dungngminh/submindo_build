@@ -1,0 +1,66 @@
+name: Extract App Info
+description: Extract version name and commit message from app repository
+
+inputs:
+  app-repo:
+    description: App repository (owner/repo format)
+    required: true
+  ref:
+    description: Git ref to checkout (branch, tag, or SHA)
+    required: true
+  token:
+    description: GitHub token for accessing the app repository
+    required: true
+
+outputs:
+  version-name:
+    description: Version name extracted from build.gradle.kts
+    value: ${{ steps.version-info.outputs.version_name }}
+  commit-message:
+    description: Commit message from the specified ref
+    value: ${{ steps.commit-info.outputs.message }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout app repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.app-repo }}
+        ref: ${{ inputs.ref }}
+        token: ${{ inputs.token }}
+        path: app-src
+
+    - name: Extract version name from build.gradle.kts
+      id: version-info
+      shell: bash
+      working-directory: app-src
+      run: |
+        # Locate the gradle file that declares the version.
+        # `|| true` neutralises grep's exit 1 on no-match so pipefail/`set -e`
+        # don't abort the step before the fallback below can run.
+        for f in composeApp/build.gradle.kts app/build.gradle.kts build.gradle.kts; do
+          if [ -f "$f" ]; then
+            VERSION_NAME=$(grep -E 'versionName\s*=\s*"[^"]*"' "$f" 2>/dev/null | sed -E 's/.*versionName\s*=\s*"([^"]*)".*/\1/' | head -1 || true)
+            [ -n "$VERSION_NAME" ] && break
+          fi
+        done
+
+        # Fallback to default if not found
+        if [ -z "${VERSION_NAME:-}" ]; then
+          VERSION_NAME="0.1.0"
+          echo "⚠️  Could not extract version name from build.gradle.kts, using fallback: $VERSION_NAME"
+        else
+          echo "✅ Extracted version name: $VERSION_NAME"
+        fi
+
+        echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Get commit message
+      id: commit-info
+      shell: bash
+      working-directory: app-src
+      run: |
+        COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+        echo "message=$COMMIT_MSG" >> "$GITHUB_OUTPUT"
+        echo "Commit message: $COMMIT_MSG"

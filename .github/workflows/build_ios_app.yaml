@@ -1,10 +1,10 @@
-name: Build iOS Beta → TestFlight
+name: Build Submindo iOS -> TestFlight
 
-run-name: "iOS Beta — ${{ github.event.client_payload.ref_name || inputs.ref || 'main' }}"
+run-name: "Build iOS — ${{ github.event.client_payload.ref_name || inputs.ref || 'main' }}"
 
 on:
   repository_dispatch:
-    types: [beta]
+    types: [build]
   workflow_dispatch:
     inputs:
       ref:
@@ -31,8 +31,12 @@ jobs:
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
       build_number: ${{ steps.resolve.outputs.build_number }}
-      version_name: ${{ steps.resolve.outputs.version_name }}
+      version_name: ${{ steps.app-info.outputs.version-name }}
+      commit_message: ${{ steps.app-info.outputs.commit-message }}
     steps:
+      - name: Checkout build repo (for composite actions)
+        uses: actions/checkout@v4
+
       - name: Resolve ref + version
         id: resolve
         run: |
@@ -42,10 +46,17 @@ jobs:
             REF="${{ inputs.ref }}"
           fi
           BUILD_NUMBER="${{ github.run_number }}"
-          VERSION_NAME="0.1.0"
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved: ref=$REF build_number=$BUILD_NUMBER"
+
+      - name: Extract app info
+        id: app-info
+        uses: ./.github/actions/extract-app-info
+        with:
+          app-repo: ${{ env.APP_REPO }}
+          ref: ${{ steps.resolve.outputs.ref }}
+          token: ${{ secrets.APP_REPO_PAT }}
 
   build:
     needs: prepare
@@ -130,7 +141,7 @@ jobs:
       - name: Setup asc CLI + auth (no Xcode/Gradle on ubuntu)
         uses: ./.github/actions/setup-ios-build
         with:
-          install-xcode: 'false'
+          install-xcode: "false"
           asc-key-id: ${{ secrets.ASC_KEY_ID }}
           asc-issuer-id: ${{ secrets.ASC_ISSUER_ID }}
           asc-key-p8-base64: ${{ secrets.ASC_KEY_P8_BASE64 }}
@@ -148,6 +159,16 @@ jobs:
           test -s "$IPA"
           echo "path=$IPA" >> "$GITHUB_OUTPUT"
 
+      - name: Write TestFlight release notes
+        run: |
+          {
+            echo "Submindo beta ${{ needs.prepare.outputs.version_name }}"
+            echo "Build #${{ needs.prepare.outputs.build_number }}"
+            echo "Source: ${{ needs.prepare.outputs.ref }}"
+            echo ""
+            echo "Changes: ${{ needs.prepare.outputs.commit_message }}"
+          } > testflight-notes.txt
+
       - name: Publish to TestFlight
         env:
           ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
@@ -157,4 +178,5 @@ jobs:
             --app "$ASC_APP_ID" \
             --ipa "${{ steps.ipa.outputs.path }}" \
             --group "$TESTFLIGHT_GROUP" \
+            --whats-new "$(cat testflight-notes.txt)" \
             --wait --poll-interval 15s
