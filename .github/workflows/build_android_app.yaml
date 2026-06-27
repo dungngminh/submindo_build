@@ -122,49 +122,12 @@ jobs:
           test -s "$AAB"
           echo "path=$AAB" >> "$GITHUB_OUTPUT"
 
-      - name: Extract APK from AAB
-        id: apk
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          wget -q https://github.com/google/bundletool/releases/download/1.15.6/bundletool-all-1.15.6.jar -O bundletool.jar
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > keystore.jks
-          test -s keystore.jks
-          java -jar bundletool.jar build-apks \
-            --bundle=${{ steps.aab.outputs.path }} \
-            --output=android-apk-${{ needs.prepare.outputs.version_code }}.apks \
-            --mode=universal \
-            --ks=keystore.jks \
-            --ks-pass=pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
-            --ks-key-alias=${{ secrets.ANDROID_KEY_ALIAS }} \
-            --key-pass=pass:${{ secrets.ANDROID_KEY_PASSWORD }}
-          mkdir -p app/build/outputs/apk/release/
-          unzip -p android-apk-${{ needs.prepare.outputs.version_code }}.apks universal.apk > android-apk-${{ needs.prepare.outputs.version_code }}.apk
-          echo "path=android-apk-${{ needs.prepare.outputs.version_code }}.apk" >> "$GITHUB_OUTPUT"
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk-${{ needs.prepare.outputs.version_code }}
-          path: android-apk-${{ needs.prepare.outputs.version_code }}.apk
-          if-no-files-found: error
-          retention-days: 30
-
       - name: Decode Play service account
         env:
           PLAY_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON_BASE64 }}
         run: |
           echo "$PLAY_SERVICE_ACCOUNT_JSON_BASE64" | base64 -d > play-sa.json
           test -s play-sa.json
-
-      - name: Upload to Play Console
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJson: play-sa.json
-          packageName: me.komkatstudio.submindo
-          releaseFiles: ${{ steps.aab.outputs.path }}
-          track: internal
-          status: completed
 
       - name: Decode Firebase service account
         env:
@@ -183,11 +146,44 @@ jobs:
             echo "Changes: ${{ needs.prepare.outputs.commit_message }}"
           } > release-notes.txt
 
-      - name: Upload to Firebase App Distribution
-        uses: wzieba/Firebase-Distribution-Github-Action@v1
-        with:
-          appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
-          serviceCredentialsFile: firebase-sa.json
-          groups: ${{ vars.FIREBASE_TESTER_GROUPS || 'testers' }}
-          file: ${{ steps.apk.outputs.path }}
-          releaseNotesFile: release-notes.txt
+      - parallel:
+          - name: Upload to Play Console
+            uses: r0adkll/upload-google-play@v1
+            with:
+              serviceAccountJson: play-sa.json
+              packageName: me.komkatstudio.submindo
+              releaseFiles: ${{ steps.aab.outputs.path }}
+              track: internal
+              status: completed
+
+          - name: Extract APK and upload to Firebase App Distribution
+            env:
+              AAB_PATH: ${{ steps.aab.outputs.path }}
+              VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+              ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+              ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+              ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+              ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+              FIREBASE_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+              FIREBASE_GROUPS: ${{ vars.FIREBASE_TESTER_GROUPS || 'testers' }}
+            run: |
+              set -euo pipefail
+              wget -q https://github.com/google/bundletool/releases/download/1.15.6/bundletool-all-1.15.6.jar -O bundletool.jar
+              echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > keystore.jks
+              test -s keystore.jks
+              APKS="android-apk-${VERSION_CODE}.apks"
+              APK="android-apk-${VERSION_CODE}.apk"
+              java -jar bundletool.jar build-apks \
+                --bundle="$AAB_PATH" \
+                --output="$APKS" \
+                --mode=universal \
+                --ks=keystore.jks \
+                --ks-pass=pass:"$ANDROID_KEYSTORE_PASSWORD" \
+                --ks-key-alias="$ANDROID_KEY_ALIAS" \
+                --key-pass=pass:"$ANDROID_KEY_PASSWORD"
+              unzip -p "$APKS" universal.apk > "$APK"
+              export GOOGLE_APPLICATION_CREDENTIALS=firebase-sa.json
+              npx --yes firebase-tools@latest appdistribution:distribute "$APK" \
+                --app "$FIREBASE_APP_ID" \
+                --groups "$FIREBASE_GROUPS" \
+                --release-notes-file release-notes.txt

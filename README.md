@@ -35,7 +35,7 @@ flowchart TB
         direction TB
         android_prepare["prepare · ubuntu<br/>ref + version_code=epoch/60<br/>extract-app-info"]
         android_build["build · ubuntu<br/>checkout-app · setup-android-build<br/>gradlew bundleRelease → AAB"]
-        android_distribute["distribute · ubuntu<br/>bundletool → APK"]
+        android_distribute["distribute · ubuntu<br/>parallel: Play + Firebase"]
         play["Play Console<br/>internal track"]
         firebase["Firebase App Distribution"]
 
@@ -72,7 +72,7 @@ Workflow: `.github/workflows/build_android_app.yaml`
 |-----|--------|--------------|
 | **prepare** | `ubuntu-latest` | Resolve ref, `version_code = epoch/60`, extract `VERSION_NAME` + commit message from app repo |
 | **build** | `ubuntu-latest` | Checkout app, setup keystore, `gradlew :composeApp:bundleRelease` → AAB artifact |
-| **distribute** | `ubuntu-latest` | Extract universal APK (bundletool), upload AAB to **Play Console** (internal track), upload APK to **Firebase App Distribution** |
+| **distribute** | `ubuntu-latest` | Download AAB once, then **`parallel`** steps: Play Console upload + bundletool/Firebase upload concurrently ([parallel steps](https://github.blog/changelog/2026-06-25-actions-steps-can-now-be-run-in-parallel/)) |
 
 ### iOS → TestFlight
 
@@ -83,6 +83,8 @@ Workflow: `.github/workflows/build_ios_app.yaml`
 | **prepare** | `ubuntu-latest` | Resolve ref, `build_number = epoch/60`, extract `VERSION_NAME` + commit message |
 | **build** | `macos-15` | Checkout app, setup asc CLI + signing, write `version.properties`, `asc xcode archive` + export → IPA artifact |
 | **publish** | `ubuntu-latest` | `asc publish testflight` with release notes to configured tester group |
+
+Job graph is linear (`prepare → build → publish`) because there is a single publish destination. To add parallel post-build steps later (e.g. dSYM upload to Sentry, Slack notification), create separate jobs with `needs: build` alongside `publish`.
 
 ### Composite Actions
 
