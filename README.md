@@ -35,13 +35,16 @@ flowchart TB
         direction TB
         android_prepare["prepare · ubuntu<br/>ref + version_code=epoch/60<br/>extract-app-info"]
         android_build["build · ubuntu<br/>checkout-app · setup-android-build<br/>gradlew bundleRelease → AAB"]
-        android_distribute["distribute · ubuntu<br/>parallel: Play + Firebase"]
+        android_play["play-internal · ubuntu<br/>AAB → Play Console"]
+        android_firebase["firebase-distribute · ubuntu<br/>bundletool → APK → Firebase"]
         play["Play Console<br/>internal track"]
         firebase["Firebase App Distribution"]
 
-        android_prepare --> android_build --> android_distribute
-        android_distribute --> play
-        android_distribute --> firebase
+        android_prepare --> android_build
+        android_build --> android_play
+        android_build --> android_firebase
+        android_play --> play
+        android_firebase --> firebase
     end
 
     subgraph ios["iOS — TestFlight"]
@@ -72,7 +75,8 @@ Workflow: `.github/workflows/build_android_app.yaml`
 |-----|--------|--------------|
 | **prepare** | `ubuntu-latest` | Resolve ref, `version_code = epoch/60`, extract `VERSION_NAME` + commit message from app repo |
 | **build** | `ubuntu-latest` | Checkout app, setup keystore, `gradlew :composeApp:bundleRelease` → AAB artifact |
-| **distribute** | `ubuntu-latest` | Download AAB once, then **`parallel`** steps: Play Console upload + bundletool/Firebase upload concurrently ([parallel steps](https://github.blog/changelog/2026-06-25-actions-steps-can-now-be-run-in-parallel/)) |
+| **play-internal** | `ubuntu-latest` | Download AAB, upload to **Play Console** (internal track) — parallel job with `firebase-distribute` |
+| **firebase-distribute** | `ubuntu-latest` | Download AAB, extract universal APK (bundletool), upload to **Firebase App Distribution** |
 
 ### iOS → TestFlight
 
