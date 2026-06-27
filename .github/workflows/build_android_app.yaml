@@ -3,6 +3,9 @@ name: Build Submindo Android -> Firebase App Distribution + Play Store internal 
 run-name: "Build Android — ${{ github.event.client_payload.ref_name || inputs.ref || 'main' }}"
 
 on:
+  push:
+    branches:
+      - main
   repository_dispatch:
     types: [build]
   workflow_dispatch:
