@@ -92,6 +92,15 @@ jobs:
           distribution-p12-password: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
           bundle-id: me.komkatstudio.submindo
 
+      - name: Write version.properties for CI
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+          VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+        run: |
+          printf 'VERSION_NAME=%s\nVERSION_CODE=%s\n' "$VERSION_NAME" "$BUILD_NUMBER" > version.properties
+          echo "version.properties -> $VERSION_NAME ($BUILD_NUMBER)"
+
       - name: Archive + export IPA
         working-directory: ${{ env.APP_DIR }}/iosApp
         env:
@@ -182,5 +191,6 @@ jobs:
             --app "$ASC_APP_ID" \
             --ipa "${{ steps.ipa.outputs.path }}" \
             --group "$TESTFLIGHT_GROUP" \
-            --whats-new "$(cat testflight-notes.txt)" \
+            --test-notes "$(cat testflight-notes.txt)" \
+            --locale "en-US" \
             --wait --poll-interval 15s
