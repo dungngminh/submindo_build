@@ -119,14 +119,16 @@ jobs:
           sed "s/__PROFILE_UUID__/${PROVISIONING_PROFILE_UUID}/g" ".asc/export-options-template.plist" > "$EXPORT_OPTIONS"
           echo "ExportOptions.plist written (profile=${PROVISIONING_PROFILE_UUID})"
 
+          # Archive with automatic signing. Manual signing flags here apply to
+          # EVERY target in the graph, including SPM packages (Firebase, etc)
+          # which reject provisioning profiles -> ARCHIVE FAILED. Manual signing
+          # is applied only to the app target at export via ExportOptions.plist.
           asc xcode archive \
             --project iosApp.xcodeproj --scheme iosApp --configuration Release \
             --clean --archive-path "$ARCHIVE" --overwrite \
             --xcodebuild-flag=-destination \
             --xcodebuild-flag=generic/platform=iOS \
-            --xcodebuild-flag="CODE_SIGN_STYLE=Manual" \
-            --xcodebuild-flag="CODE_SIGN_IDENTITY=Apple Distribution" \
-            --xcodebuild-flag="PROVISIONING_PROFILE=${PROVISIONING_PROFILE_UUID}" \
+            --xcodebuild-flag=-allowProvisioningUpdates \
             --xcodebuild-flag="MARKETING_VERSION=${VERSION_NAME}" \
             --xcodebuild-flag="CURRENT_PROJECT_VERSION=${BUILD_NUMBER}" \
             --output json
