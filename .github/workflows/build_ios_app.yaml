@@ -129,6 +129,8 @@ jobs:
             --xcodebuild-flag=-destination \
             --xcodebuild-flag=generic/platform=iOS \
             --xcodebuild-flag=-allowProvisioningUpdates \
+            --xcodebuild-flag=-jobs \
+            --xcodebuild-flag=2 \
             --xcodebuild-flag="MARKETING_VERSION=${VERSION_NAME}" \
             --xcodebuild-flag="CURRENT_PROJECT_VERSION=${BUILD_NUMBER}" \
             --output json

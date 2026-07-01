@@ -67,6 +67,37 @@ runs:
       if: ${{ inputs.install-xcode == 'true' }}
       uses: gradle/actions/setup-gradle@v4
 
+    - name: Tune Gradle/Kotlin heap for CI runner
+      if: ${{ inputs.install-xcode == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The repo's gradle.properties sizes heaps for a dev Mac (Gradle 8g +
+        # Kotlin daemon 6g = 14g). GitHub-hosted macos Apple-silicon runners have
+        # only ~7 GB RAM, so the Kotlin/Native Release compile OOMs
+        # (java.lang.OutOfMemoryError / exit 137 -> ARCHIVE FAILED).
+        #
+        # GRADLE_USER_HOME/gradle.properties overrides the project gradle.properties,
+        # so we shrink the heaps here for CI only (dev machine config untouched).
+        # kotlin.native.disableCompilerDaemon=true means K/N compiles inside the
+        # Gradle daemon, so org.gradle.jvmargs IS the K/N compiler heap -> give it
+        # the bulk and keep the Kotlin JVM daemon small. Serialize Gradle work and
+        # rely on runner swap to absorb peak alongside Xcode's clang.
+        echo "Runner memory:"
+        sysctl -n hw.memsize | awk '{ printf "  hw.memsize = %.1f GB\n", $1/1024/1024/1024 }'
+        GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+        mkdir -p "$GRADLE_USER_HOME"
+        printf '%s\n' \
+          '' \
+          '# --- CI heap override (added by setup-ios-build) ---' \
+          'org.gradle.jvmargs=-Xmx5g -XX:+UseG1GC -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8' \
+          'kotlin.daemon.jvmargs=-Xmx768m -XX:MaxMetaspaceSize=384m' \
+          'org.gradle.parallel=false' \
+          'org.gradle.workers.max=1' \
+          'kotlin.native.cacheKind=none' \
+          >> "$GRADLE_USER_HOME/gradle.properties"
+        echo "Wrote CI heap override to $GRADLE_USER_HOME/gradle.properties"
+
     - name: Install asc CLI
       if: ${{ inputs.install-asc == 'true' }}
       uses: rudrankriyam/setup-asc@v1
